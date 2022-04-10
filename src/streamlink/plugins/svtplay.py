@@ -15,6 +15,7 @@ from streamlink.plugin.api import validate
 from streamlink.stream.dash import DASHStream
 from streamlink.stream.ffmpegmux import MuxedStream
 from streamlink.stream.http import HTTPStream
+from streamlink.utils.l10n import Localization
 
 log = logging.getLogger(__name__)
 
@@ -95,18 +96,25 @@ class SVTPlay(Plugin):
         self._set_metadata(api_data, 'VOD')
 
         substreams = {}
-        if 'subtitleReferences' in api_data:
-            for subtitle in api_data['subtitleReferences']:
-                if subtitle['format'] == 'webvtt':
-                    log.debug("Subtitle={0}".format(subtitle['url']))
-                    substreams[subtitle['format']] = HTTPStream(
-                        self.session,
-                        subtitle['url'],
-                    )
-
         for manifest in api_data['videoReferences']:
             if manifest['format'] == 'dashhbbtv':
                 for q, s in DASHStream.parse_manifest(self.session, manifest['url']).items():
+
+                    # The subtitle will almost certainly always be in
+                    # Swedish. I'm not sure if svtplay offers any
+                    # other language. Maybe they will at some point,
+                    # so lets be thorough anyway.
+                    for period in s.mpd.periods:
+                        for adap in period.adaptationSets:
+                            if adap.contentType != 'text':
+                                continue
+                            sub_lang = Localization.get_language(adap.lang).alpha3
+                            for representation in adap.representations:
+                                for sub_url in representation.baseURLs:
+                                    sub_url = sub_url.join(sub_url.base_url, sub_url.url)
+                                    log.debug("Subtitle={0}".format(sub_url))
+                                    substreams[sub_lang] = HTTPStream(self.session, sub_url)
+
                     if self.get_option('mux_subtitles') and substreams:
                         yield q, MuxedStream(self.session, s, subtitles=substreams)
                     else:
